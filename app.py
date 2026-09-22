@@ -8,18 +8,26 @@ import sqlite3
 import hashlib
 from datetime import datetime
 
-# --- მონაცემთა ბაზის ფუნქციები ---
+import streamlit as st
+import pandas as pd
+import sqlite3
+import hashlib
+from datetime import datetime
+
+# --- მონაცემთა ბაზის ინიციალიზაცია ---
 conn = sqlite3.connect('store_data.db', check_same_thread=False)
 c = conn.cursor()
 
-# ცხრილების შექმნა
+# users ცხრილი (დაემატა email)
 c.execute('''
     CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY,
+        email TEXT UNIQUE,
         password TEXT
     )
 ''')
 
+# orders ცხრილი
 c.execute('''
     CREATE TABLE IF NOT EXISTS orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,14 +45,9 @@ c.execute('''
 ''')
 conn.commit()
 
-# პაროლის დაჰეშვა უსაფრთხოებისთვის
+# პაროლის დაჰეშვა
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
-
-def check_hashes(password, hashed_text):
-    if make_hashes(password) == hashed_text:
-        return hashed_text
-    return False
 
 # გვერდის კონფიგურაცია
 st.set_page_config(page_title="გაყიდვების მენეჯმენტი", layout="wide")
@@ -64,33 +67,36 @@ if not st.session_state.logged_in:
     
     if choice == "შესვლა":
         st.subheader("🔑 სისტემაში შესვლა")
-        username = st.text_input("მომხმარებლის სახელი")
+        login_input = st.text_input("მომხმარებლის სახელი ან ელფოსტა")
         password = st.text_input("პაროლი", type='password')
         
         if st.button("შესვლა"):
             hashed_pswd = make_hashes(password)
-            c.execute('SELECT * FROM users WHERE username =? AND password = ?', (username, hashed_pswd))
+            # ძებნა სახელით ან ელფოსტით
+            c.execute('SELECT * FROM users WHERE (username = ? OR email = ?) AND password = ?', (login_input, login_input, hashed_pswd))
             result = c.fetchone()
             if result:
                 st.session_state.logged_in = True
-                st.session_state.username = username
-                st.success(f"მოგესალმებით, {username}!")
+                st.session_state.username = result[0]  # username
+                st.success(f"მოგესალმებით, {result[0]}!")
                 st.rerun()
             else:
-                st.error("არასწორი მომხმარებელი ან პაროლი")
+                st.error("არასწორი მონაცემები ან პაროლი")
 
     elif choice == "რეგისტრაცია":
         st.subheader("📝 ახალი ანგარიშის შექმნა")
-        new_user = st.text_input("ახალი მომხმარებლის სახელი")
-        new_password = st.text_input("ახალი პაროლი", type='password')
+        new_user = st.text_input("მომხმარებლის სახელი")
+        new_email = st.text_input("ელფოსტა (Email)")
+        new_password = st.text_input("პაროლი", type='password')
         
         if st.button("რეგისტრაცია"):
-            if new_user and new_password:
-                c.execute('SELECT * FROM users WHERE username = ?', (new_user,))
+            if new_user and new_email and new_password:
+                # შემოწმება, ხომ არ არსებობს ასეთი სახელი ან მეილი
+                c.execute('SELECT * FROM users WHERE username = ? OR email = ?', (new_user, new_email))
                 if c.fetchone():
-                    st.warning("ასეთი მომხმარებელი უკვე არსებობს!")
+                    st.warning("ასეთი მომხმარებელი ან ელფოსტა უკვე დარეგისტრირებულია!")
                 else:
-                    c.execute('INSERT INTO users(username, password) VALUES (?,?)', (new_user, make_hashes(new_password)))
+                    c.execute('INSERT INTO users(username, email, password) VALUES (?,?,?)', (new_user, new_email, make_hashes(new_password)))
                     conn.commit()
                     st.success("ანგარიში წარმატებით შეიქმნა! გადადით შესვლის გვერდზე.")
             else:
@@ -135,7 +141,7 @@ else:
                 st.sidebar.success("შეკვეთა შენახულია!")
                 st.rerun()
 
-    # --- მხოლოდ მიმდინარე მომხმარებლის მონაცემების წამოღება ---
+    # --- მხოლოდ მიმდინარე მომხმარებლის შეკვეთები ---
     df = pd.read_sql_query('SELECT id AS "შეკვეთის #", customer AS "მომხმარებელი", phone AS "ტელეფონი", address AS "მისამართი", order_date AS "თარიღი", cost_price AS "თვითღირებულება (₾)", sale_price AS "გაყიდვის ფასი (₾)", profit AS "მოგება (₾)", status AS "სტატუსი", payment_method AS "გადახდის მეთოდი" FROM orders WHERE username = ?', conn, params=(st.session_state.username,))
 
     # --- ფილტრები ---
@@ -167,7 +173,7 @@ else:
             (filtered_df["გაყიდვის ფასი (₾)"] <= max_price)
         ]
 
-    # --- KPIs (ანალიტიკა) ---
+    # --- KPIs ---
     st.markdown("---")
     m1, m2, m3, m4 = st.columns(4)
     total_sales = filtered_df["გაყიდვის ფასი (₾)"].sum() if not filtered_df.empty else 0
