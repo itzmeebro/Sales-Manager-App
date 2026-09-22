@@ -15,8 +15,44 @@ import hashlib
 from datetime import datetime
 
 # --- მონაცემთა ბაზის ინიციალიზაცია ---
+# --- მონაცემთა ბაზის ინიციალიზაცია ---
 conn = sqlite3.connect('store_data.db', check_same_thread=False)
 c = conn.cursor()
+
+# users ცხრილის შექმნა
+c.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        username TEXT PRIMARY KEY,
+        email TEXT UNIQUE,
+        password TEXT
+    )
+''')
+
+# თუ ძველი ბაზა არსებობს, ვამატებთ email სვეტს უსაფრთხოდ
+try:
+    c.execute('ALTER TABLE users ADD COLUMN email TEXT UNIQUE')
+    conn.commit()
+except sqlite3.OperationalError:
+    pass  # სვეტი უკვე არსებობს
+
+# orders ცხრილი
+c.execute('''
+    CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT,
+        customer TEXT,
+        phone TEXT,
+        address TEXT,
+        order_date TEXT,
+        cost_price REAL,
+        sale_price REAL,
+        profit REAL,
+        status TEXT,
+        payment_method TEXT
+    )
+''')
+conn.commit()
+
 
 # users ცხრილი (დაემატა email)
 c.execute('''
