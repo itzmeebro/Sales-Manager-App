@@ -2,160 +2,195 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
+import streamlit as st
+import pandas as pd
+import sqlite3
+import hashlib
+from datetime import datetime
+
+# --- მონაცემთა ბაზის ფუნქციები ---
+conn = sqlite3.connect('store_data.db', check_same_thread=False)
+c = conn.cursor()
+
+# ცხრილების შექმნა
+c.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        username TEXT PRIMARY KEY,
+        password TEXT
+    )
+''')
+
+c.execute('''
+    CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT,
+        customer TEXT,
+        phone TEXT,
+        address TEXT,
+        order_date TEXT,
+        cost_price REAL,
+        sale_price REAL,
+        profit REAL,
+        status TEXT,
+        payment_method TEXT
+    )
+''')
+conn.commit()
+
+# პაროლის დაჰეშვა უსაფრთხოებისთვის
+def make_hashes(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
+
+def check_hashes(password, hashed_text):
+    if make_hashes(password) == hashed_text:
+        return hashed_text
+    return False
+
 # გვერდის კონფიგურაცია
 st.set_page_config(page_title="გაყიდვების მენეჯმენტი", layout="wide")
 
-# სესიის მონაცემთა ბაზის ინიციალიზაცია (დემო მონაცემებით)
-if 'orders' not in st.session_state:
-    st.session_state.orders = pd.DataFrame([
-        {
-            "შეკვეთის #": 1001,
-            "მომხმარებელი": "გიორგი ბერიძე",
-            "ტელეფონი": "599123456",
-            "მისამართი": "თბილისი, რუსთაველის გამზ. 12",
-            "თარიღი": pd.to_datetime("2026-09-20").date(),
-            "თვითღირებულება (₾)": 45.0,
-            "გაყიდვის ფასი (₾)": 90.0,
-            "მოგება (₾)": 45.0,
-            "სტატუსი": "ჩაბარებულია",
-            "გადახდის მეთოდი": "ბარათი"
-        },
-        {
-            "შეკვეთის #": 1002,
-            "მომხმარებელი": "ანა კაპანაძე",
-            "ტელეფონი": "577987654",
-            "მისამართი": "ბათუმი, გორგილაძის ქ. 45",
-            "თარიღი": pd.to_datetime("2026-09-21").date(),
-            "თვითღირებულება (₾)": 120.0,
-            "გაყიდვის ფასი (₾)": 210.0,
-            "მოგება (₾)": 90.0,
-            "სტატუსი": "გზაშია",
-            "გადახდის მეთოდი": "ნაღდი ანგარიშსწორება"
-        }
-    ])
+# სესიის მდგომარეობა
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+if 'username' not in st.session_state:
+    st.session_state.username = ""
 
-st.title("📦 ონლაინ მაღაზიის გაყიდვების მენეჯმენტი")
-
-# --- გვერდითა პანელი: ახალი შეკვეთის დამატება ---
-st.sidebar.header("➕ ახალი შეკვეთის დამატება")
-with st.sidebar.form("new_order_form", clear_on_submit=True):
-    customer = st.text_input("მომხმარებლის სახელი, გვარი")
-    phone = st.text_input("ტელეფონის ნომერი")
-    address = st.text_area("მიწოდების მისამართი")
-    order_date = st.date_input("თარიღი", datetime.now())
+# --- ავტორიზაცია / რეგისტრაცია ---
+if not st.session_state.logged_in:
+    st.title("🔐 ავტორიზაცია / რეგისტრაცია")
     
-    cost_price = st.number_input("რეალური ფასი / თვითღირებულება (₾)", min_value=0.0, step=1.0)
-    sale_price = st.number_input("გაყიდვის ფასი (₾)", min_value=0.0, step=1.0)
+    menu = ["შესვლა", "რეგისტრაცია"]
+    choice = st.sidebar.selectbox("მენიუ", menu)
     
-    payment_method = st.selectbox("გადახდის მეთოდი", ["ბარათი", "გადარიცხვა", "ნაღდი ანგარიშსწორება"])
-    status = st.selectbox("სტატუსი", ["მუშავდება", "გზაშია", "ჩაბარებულია", "გაუქმებულია"])
-    
-    submitted = st.form_submit_button("შეკვეთის შენახვა")
-    
-    if submitted:
-        if not customer or not phone:
-            st.sidebar.error("გთხოვთ შეავსოთ სავალდებულო ველები (სახელი და ნომერი)!")
-        else:
-            # ახალი ID-ს გენერირება
-            next_id = 1001 if st.session_state.orders.empty else st.session_state.orders["შეკვეთის #"].max() + 1
-            profit = sale_price - cost_price
-            
-            new_row = {
-                "შეკვეთის #": next_id,
-                "მომხმარებელი": customer,
-                "ტელეფონი": phone,
-                "მისამართი": address,
-                "თარიღი": order_date,
-                "თვითღირებულება (₾)": cost_price,
-                "გაყიდვის ფასი (₾)": sale_price,
-                "მოგება (₾)": profit,
-                "სტატუსი": status,
-                "გადახდის მეთოდი": payment_method
-            }
-            
-            st.session_state.orders = pd.concat([st.session_state.orders, pd.DataFrame([new_row])], ignore_index=True)
-            st.sidebar.success(f"შეკვეთა #{next_id} წარმატებით დაემატა!")
+    if choice == "შესვლა":
+        st.subheader("🔑 სისტემაში შესვლა")
+        username = st.text_input("მომხმარებლის სახელი")
+        password = st.text_input("პაროლი", type='password')
+        
+        if st.button("შესვლა"):
+            hashed_pswd = make_hashes(password)
+            c.execute('SELECT * FROM users WHERE username =? AND password = ?', (username, hashed_pswd))
+            result = c.fetchone()
+            if result:
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.success(f"მოგესალმებით, {username}!")
+                st.rerun()
+            else:
+                st.error("არასწორი მომხმარებელი ან პაროლი")
 
-# --- ფილტრების სექცია ---
-st.subheader("🔍 ფილტრაცია და ძებნა")
-col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+    elif choice == "რეგისტრაცია":
+        st.subheader("📝 ახალი ანგარიშის შექმნა")
+        new_user = st.text_input("ახალი მომხმარებლის სახელი")
+        new_password = st.text_input("ახალი პაროლი", type='password')
+        
+        if st.button("რეგისტრაცია"):
+            if new_user and new_password:
+                c.execute('SELECT * FROM users WHERE username = ?', (new_user,))
+                if c.fetchone():
+                    st.warning("ასეთი მომხმარებელი უკვე არსებობს!")
+                else:
+                    c.execute('INSERT INTO users(username, password) VALUES (?,?)', (new_user, make_hashes(new_password)))
+                    conn.commit()
+                    st.success("ანგარიში წარმატებით შეიქმნა! გადადით შესვლის გვერდზე.")
+            else:
+                st.error("გთხოვთ შეავსოთ ყველა ველი!")
 
-with col_f1:
-    search_query = st.text_input("🔎 ძებნა (სახელი / ნომერი / #)")
-with col_f2:
-    status_filter = st.multiselect("სტატუსი", options=["მუშავდება", "გზაშია", "ჩაბარებულია", "გაუქმებულია"])
-with col_f3:
-    min_price, max_price = st.slider("გაყიდვის ფასის დიაპაზონი (₾)", 0, 2000, (0, 2000))
-with col_f4:
-    date_range = st.date_input("თარიღების დიაპაზონი", [])
+# --- ძირითადი აპლიკაცია (შესვლის შემდეგ) ---
+else:
+    st.sidebar.write(f"👤 მომხმარებელი: **{st.session_state.username}**")
+    if st.sidebar.button("გამოსვლა (Logout)"):
+        st.session_state.logged_in = False
+        st.session_state.username = ""
+        st.rerun()
 
-# ფილტრაციის ლოგიკა
-filtered_df = st.session_state.orders.copy()
+    st.title("📦 გაყიდვების მენეჯმენტი")
 
-if search_query:
-    filtered_df = filtered_df[
-        filtered_df["მომხმარებელი"].astype(str).str.contains(search_query, case=False) |
-        filtered_df["ტელეფონი"].astype(str).str.contains(search_query) |
-        filtered_df["შეკვეთის #"].astype(str).str.contains(search_query)
-    ]
+    # --- ახალი შეკვეთის დამატება ---
+    st.sidebar.header("➕ ახალი შეკვეთა")
+    with st.sidebar.form("new_order_form", clear_on_submit=True):
+        customer = st.text_input("მომხმარებლის სახელი")
+        phone = st.text_input("ტელეფონის ნომერი")
+        address = st.text_area("მისამართი")
+        order_date = st.date_input("თარიღი", datetime.now())
+        
+        cost_price = st.number_input("თვითღირებულება (₾)", min_value=0.0, step=1.0)
+        sale_price = st.number_input("გაყიდვის ფასი (₾)", min_value=0.0, step=1.0)
+        
+        payment_method = st.selectbox("გადახდა", ["ბარათი", "გადარიცხვა", "ნაღდი ანგარიშსწორება"])
+        status = st.selectbox("სტატუსი", ["მუშავდება", "გზაშია", "ჩაბარებულია", "გაუქმებულია"])
+        
+        submitted = st.form_submit_button("შენახვა")
+        
+        if submitted:
+            if not customer or not phone:
+                st.sidebar.error("შეავსეთ სავალდებულო ველები!")
+            else:
+                profit = sale_price - cost_price
+                c.execute('''
+                    INSERT INTO orders (username, customer, phone, address, order_date, cost_price, sale_price, profit, status, payment_method)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (st.session_state.username, customer, phone, address, str(order_date), cost_price, sale_price, profit, status, payment_method))
+                conn.commit()
+                st.sidebar.success("შეკვეთა შენახულია!")
+                st.rerun()
 
-if status_filter:
-    filtered_df = filtered_df[filtered_df["სტატუსი"].isin(status_filter)]
+    # --- მხოლოდ მიმდინარე მომხმარებლის მონაცემების წამოღება ---
+    df = pd.read_sql_query('SELECT id AS "შეკვეთის #", customer AS "მომხმარებელი", phone AS "ტელეფონი", address AS "მისამართი", order_date AS "თარიღი", cost_price AS "თვითღირებულება (₾)", sale_price AS "გაყიდვის ფასი (₾)", profit AS "მოგება (₾)", status AS "სტატუსი", payment_method AS "გადახდის მეთოდი" FROM orders WHERE username = ?', conn, params=(st.session_state.username,))
 
-filtered_df = filtered_df[
-    (filtered_df["გაყიდვის ფასი (₾)"] >= min_price) & 
-    (filtered_df["გაყიდვის ფასი (₾)"] <= max_price)
-]
+    # --- ფილტრები ---
+    st.subheader("🔍 ფილტრაცია და ძებნა")
+    col_f1, col_f2, col_f3 = st.columns(3)
 
-if len(date_range) == 2:
-    start_d, end_d = date_range
-    filtered_df = filtered_df[
-        (filtered_df["თარიღი"] >= start_d) & 
-        (filtered_df["თარიღი"] <= end_d)
-    ]
+    with col_f1:
+        search_query = st.text_input("🔎 ძებნა (სახელი / ნომერი / #)")
+    with col_f2:
+        status_filter = st.multiselect("სტატუსი", options=["მუშავდება", "გზაშია", "ჩაბარებულია", "გაუქმებულია"])
+    with col_f3:
+        min_price, max_price = st.slider("გაყიდვის ფასის დიაპაზონი (₾)", 0, 2000, (0, 2000))
 
-# --- ანალიტიკური ბარათები (KPIs) ---
-st.markdown("---")
-m1, m2, m3, m4 = st.columns(4)
-total_sales = filtered_df["გაყიდვის ფასი (₾)"].sum()
-total_cost = filtered_df["თვითღირებულება (₾)"].sum()
-total_profit = filtered_df["მოგება (₾)"].sum()
-total_orders = len(filtered_df)
+    filtered_df = df.copy()
 
-m1.metric("სულ შეკვეთები", f"{total_orders} ცალი")
-m2.metric("სულ შემოსავალი", f"{total_sales:,.2f} ₾")
-m3.metric("სულ თვითღირებულება", f"{total_cost:,.2f} ₾")
-m4.metric("სუფთა მოგება", f"{total_profit:,.2f} ₾")
-st.markdown("---")
+    if search_query and not filtered_df.empty:
+        filtered_df = filtered_df[
+            filtered_df["მომხმარებელი"].astype(str).str.contains(search_query, case=False) |
+            filtered_df["ტელეფონი"].astype(str).str.contains(search_query) |
+            filtered_df["შეკვეთის #"].astype(str).str.contains(search_query)
+        ]
 
-# --- ცხრილის ჩვენება და რედაქტირება ---
-st.subheader("📋 შეკვეთების სრული სია")
-st.caption("შეგიძლიათ პირდაპირ ცხრილში შეცვალოთ მონაცემები (მაგ. შეცვალოთ სტატუსი ან ფასი).")
+    if status_filter and not filtered_df.empty:
+        filtered_df = filtered_df[filtered_df["სტატუსი"].isin(status_filter)]
 
-edited_df = st.data_editor(
-    filtered_df,
-    num_rows="dynamic",
-    use_container_width=True,
-    column_config={
-        "სტატუსი": st.column_config.SelectboxColumn(
-            "სტატუსი",
-            options=["მუშავდება", "გზაშია", "ჩაბარებულია", "გაუქმებულია"],
-            required=True
-        ),
-        "გადახდის მეთოდი": st.column_config.SelectboxColumn(
-            "გადახდის მეთოდი",
-            options=["ბარათი", "გადარიცხვა", "ნაღდი ანგარიშსწორება"]
-        ),
-        "გაყიდვის ფასი (₾)": st.column_config.NumberColumn(format="%.2f ₾"),
-        "თვითღირებულება (₾)": st.column_config.NumberColumn(format="%.2f ₾"),
-        "მოგება (₾)": st.column_config.NumberColumn(format="%.2f ₾"),
-    }
-)
+    if not filtered_df.empty:
+        filtered_df = filtered_df[
+            (filtered_df["გაყიდვის ფასი (₾)"] >= min_price) & 
+            (filtered_df["გაყიდვის ფასი (₾)"] <= max_price)
+        ]
 
-# მონაცემების ექსპორტი
-st.download_button(
-    label="📥 Excel/CSV ფაილად ჩამოტვირთვა",
-    data=filtered_df.to_csv(index=False).encode('utf-8-sig'),
-    file_name=f"orders_{datetime.now().strftime('%Y%m%d')}.csv",
-    mime="text/csv"
-)
+    # --- KPIs (ანალიტიკა) ---
+    st.markdown("---")
+    m1, m2, m3, m4 = st.columns(4)
+    total_sales = filtered_df["გაყიდვის ფასი (₾)"].sum() if not filtered_df.empty else 0
+    total_cost = filtered_df["თვითღირებულება (₾)"].sum() if not filtered_df.empty else 0
+    total_profit = filtered_df["მოგება (₾)"].sum() if not filtered_df.empty else 0
+    total_orders = len(filtered_df)
+
+    m1.metric("სულ შეკვეთები", f"{total_orders} ცალი")
+    m2.metric("სულ შემოსავალი", f"{total_sales:,.2f} ₾")
+    m3.metric("სულ თვითღირებულება", f"{total_cost:,.2f} ₾")
+    m4.metric("სუფთა მოგება", f"{total_profit:,.2f} ₾")
+    st.markdown("---")
+
+    # --- ცხრილი ---
+    st.subheader("📋 ჩემი შეკვეთები")
+    if not filtered_df.empty:
+        st.dataframe(filtered_df, use_container_width=True)
+        
+        st.download_button(
+            label="📥 CSV ფაილად ჩამოტვირთვა",
+            data=filtered_df.to_csv(index=False).encode('utf-8-sig'),
+            file_name=f"my_orders_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+    else:
+        st.info("შეკვეთები ჯერ არ არის დამატებული.")
